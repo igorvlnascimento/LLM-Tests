@@ -52,29 +52,27 @@ print(print_number_of_trainable_model_parameters(peft_model))
 
 file_txt.write(print_number_of_trainable_model_parameters(peft_model)+'\n')
 
-output_dir = f'./peft-re-training-{str(int(time.time()))}'
+output_dir = f'./re-training-checkpoint'
 
-peft_training_args = TrainingArguments(
+training_args = TrainingArguments(
     output_dir=output_dir,
-    auto_find_batch_size=True,
-    learning_rate=1e-3, # Higher learning rate than full fine-tuning.
+    learning_rate=1e-5,
     num_train_epochs=1,
+    weight_decay=0.01,
     logging_steps=1,
-    max_steps=1    
-)
-    
-peft_trainer = Trainer(
-    model=peft_model,
-    args=peft_training_args,
-    train_dataset=tokenized_datasets["train"],
+    max_steps=1
 )
 
-peft_trainer.train()
+trainer = Trainer(
+    model=original_model,
+    args=training_args,
+    train_dataset=tokenized_datasets['train'],
+    eval_dataset=tokenized_datasets['validation']
+)
 
-peft_model_path="./peft-re-checkpoint-local"
+trainer.train()
 
-peft_trainer.model.save_pretrained(peft_model_path)
-tokenizer.save_pretrained(peft_model_path)
+instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./flan-re-checkpoint", torch_dtype=torch.bfloat16)
 
 correct = 0
 for index in range(int(len(dataset['test'])*.1)):
