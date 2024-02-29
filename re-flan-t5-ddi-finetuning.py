@@ -27,17 +27,17 @@ def tokenize_function(example):
 tokenized_datasets = dataset.map(tokenize_function, batched=True)
 tokenized_datasets = tokenized_datasets.remove_columns(['id', 'query', 'answer', 'choices', 'gold'])
 
-# lora_config = LoraConfig(
-#     r=32, # Rank
-#     lora_alpha=32,
-#     target_modules=["q", "v"],
-#     lora_dropout=0.05,
-#     bias="none",
-#     task_type=TaskType.SEQ_2_SEQ_LM # FLAN-T5
-# )
+lora_config = LoraConfig(
+    r=32, # Rank
+    lora_alpha=32,
+    target_modules=["q", "v"],
+    lora_dropout=0.05,
+    bias="none",
+    task_type=TaskType.SEQ_2_SEQ_LM # FLAN-T5
+)
 
-# peft_model = get_peft_model(original_model, 
-#                             lora_config)
+peft_model = get_peft_model(original_model, 
+                            lora_config)
 
 def print_number_of_trainable_model_parameters(model):
     trainable_model_params = 0
@@ -48,9 +48,9 @@ def print_number_of_trainable_model_parameters(model):
             trainable_model_params += param.numel()
     return f"trainable model parameters: {trainable_model_params}\nall model parameters: {all_model_params}\npercentage of trainable model parameters: {100 * trainable_model_params / all_model_params:.2f}%"
 
-print(print_number_of_trainable_model_parameters(original_model))
+print(print_number_of_trainable_model_parameters(peft_model))
 
-file_txt.write(print_number_of_trainable_model_parameters(original_model)+'\n')
+file_txt.write(print_number_of_trainable_model_parameters(peft_model)+'\n')
 
 output_dir = f'./re-training-checkpoint'
 
@@ -64,7 +64,7 @@ training_args = TrainingArguments(
 )
 
 trainer = Trainer(
-    model=original_model,
+    model=peft_model,
     args=training_args,
     train_dataset=tokenized_datasets['train'],
     eval_dataset=tokenized_datasets['valid']
