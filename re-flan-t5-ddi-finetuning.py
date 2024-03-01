@@ -1,11 +1,63 @@
 from datasets import load_dataset
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, GenerationConfig, TrainingArguments, Trainer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, TrainingArguments, Trainer, EarlyStoppingCallback, IntervalStrategy
 import torch
 import time
+import numpy as np
 from copy import copy
 from peft import LoraConfig, get_peft_model, TaskType
+from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_score
 
-file_txt = open('results.txt', 'w')
+def prompt_results(model_name, model, tokenizer, dataset):
+    correct = 0
+    file_txt = open(f'results.txt', 'a')
+    file_txt.write(f'{model_name}\n')
+    file_txt.write(print_number_of_trainable_model_parameters(model)+'\n')
+    for index in range(int(len(dataset['test'])*.1)):
+        query = dataset['test'][index]['query']
+        answer = dataset['test'][index]['answer']
+
+        prompt = copy(query)
+
+        inputs = tokenizer(prompt, return_tensors='pt')
+        output = tokenizer.decode(
+            model.generate(
+                inputs["input_ids"], 
+                max_new_tokens=200,
+            )[0], 
+            skip_special_tokens=True
+        )
+
+        dash_line = '-'.join('' for x in range(100))
+        if output.lower() == answer.lower():
+            correct += 1
+
+        file_txt.write(dash_line+'\n')
+        print(dash_line)
+        file_txt.write(f'INPUT PROMPT:\n{prompt}'+'\n')
+        print(f'INPUT PROMPT:\n{prompt}')
+        file_txt.write(dash_line+'\n')
+        print(dash_line)
+        file_txt.write(f'BASELINE HUMAN ANSWER:\n{answer}'+'\n')
+        print(f'BASELINE HUMAN ANSWER:\n{answer}\n')
+        file_txt.write(dash_line+'\n')
+        print(dash_line)
+        file_txt.write(f'MODEL GENERATION - ZERO SHOT:\n{output}'+'\n')
+        print(f'MODEL GENERATION - ZERO SHOT:\n{output}')
+
+    accuracy = correct / len(dataset['test'])
+    file_txt.write(f'ACCURACY:\n{accuracy}')
+    print(f"Accuracy: {accuracy}")
+    file_txt.close()
+
+def compute_metrics(p):    
+    pred, labels = p
+    pred = np.argmax(pred, axis=1)
+    accuracy = accuracy_score(y_true=labels, y_pred=pred)
+    recall = recall_score(y_true=labels, y_pred=pred)
+    precision = precision_score(y_true=labels, y_pred=pred)
+    micro_f1 = f1_score(y_true=labels, y_pred=pred, average='micro')
+    macro_f1 = f1_score(y_true=labels, y_pred=pred, average='macro')
+    return {"accuracy": accuracy, "precision": precision, "recall": recall, "micro_f1": micro_f1, "macro_f1": macro_f1}
 
 huggingface_dataset_name = "YBXL/DDI2013_test"
 
@@ -50,64 +102,60 @@ def print_number_of_trainable_model_parameters(model):
 
 print(print_number_of_trainable_model_parameters(peft_model))
 
-file_txt.write(print_number_of_trainable_model_parameters(peft_model)+'\n')
-
-output_dir = f'./re-training-checkpoint'
+output_dir = f'./full-flan-re-checkpoint'
 
 training_args = TrainingArguments(
+    evaluation_strategy = IntervalStrategy.STEPS, # "steps"
+    eval_steps = 1, # Evaluation and Save happens every 50 step
     output_dir=output_dir,
     learning_rate=1e-5,
     num_train_epochs=1,
     weight_decay=0.01,
     logging_steps=1,
-    max_steps=1
+    metric_for_best_model = 'micro_f1',
+    load_best_model_at_end=True
+)
+
+trainer = Trainer(
+    model=original_model,
+    args=training_args,
+    train_dataset=tokenized_datasets['train'],
+    eval_dataset=tokenized_datasets['valid'],
+    compute_metrics=compute_metrics,
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=3)]
+)
+
+trainer.train()
+
+output_dir = f'./lora-flan-re-checkpoint'
+
+training_args = TrainingArguments(
+    evaluation_strategy = IntervalStrategy.STEPS, # "steps"
+    eval_steps = 1, # Evaluation and Save happens every 50 step
+    output_dir=output_dir,
+    learning_rate=1e-5,
+    num_train_epochs=1,
+    weight_decay=0.01,
+    logging_steps=1,
+    metric_for_best_model = 'micro_f1',
+    load_best_model_at_end=True
 )
 
 trainer = Trainer(
     model=peft_model,
     args=training_args,
     train_dataset=tokenized_datasets['train'],
-    eval_dataset=tokenized_datasets['valid']
+    eval_dataset=tokenized_datasets['valid'],
+    compute_metrics=compute_metrics,
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=3)]
 )
 
 trainer.train()
 
-instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./flan-re-checkpoint", torch_dtype=torch.bfloat16)
+instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./full-flan-re-checkpoint", torch_dtype=torch.bfloat16)
+lora_instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./lora-flan-re-checkpoint", torch_dtype=torch.bfloat16)
 
-correct = 0
-for index in range(int(len(dataset['test'])*.1)):
-    query = dataset['test'][index]['query']
-    answer = dataset['test'][index]['answer']
+prompt_results(original_model, tokenizer, dataset)
+prompt_results(instruct_model, tokenizer, dataset)
+prompt_results(lora_instruct_model, tokenizer, dataset)
 
-    prompt = copy(query)
-
-    inputs = tokenizer(prompt, return_tensors='pt')
-    output = tokenizer.decode(
-        original_model.generate(
-            inputs["input_ids"], 
-            max_new_tokens=200,
-        )[0], 
-        skip_special_tokens=True
-    )
-
-    dash_line = '-'.join('' for x in range(100))
-    if output.lower() == answer.lower():
-        correct += 1
-
-    file_txt.write(dash_line+'\n')
-    print(dash_line)
-    file_txt.write(f'INPUT PROMPT:\n{prompt}'+'\n')
-    print(f'INPUT PROMPT:\n{prompt}')
-    file_txt.write(dash_line+'\n')
-    print(dash_line)
-    file_txt.write(f'BASELINE HUMAN ANSWER:\n{answer}'+'\n')
-    print(f'BASELINE HUMAN ANSWER:\n{answer}\n')
-    file_txt.write(dash_line+'\n')
-    print(dash_line)
-    file_txt.write(f'MODEL GENERATION - ZERO SHOT:\n{output}'+'\n')
-    print(f'MODEL GENERATION - ZERO SHOT:\n{output}')
-
-accuracy = correct / len(dataset['test'])
-file_txt.write(f'ACCURACY:\n{accuracy}')
-print(f"Accuracy: {accuracy}")
-file_txt.close()
