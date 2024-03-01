@@ -155,7 +155,7 @@ trainer.train()
 instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./full-flan-re-checkpoint", torch_dtype=torch.bfloat16)
 lora_instruct_model = AutoModelForSeq2SeqLM.from_pretrained("./lora-flan-re-checkpoint", torch_dtype=torch.bfloat16)
 
-prompt_results(original_model, tokenizer, dataset)
-prompt_results(instruct_model, tokenizer, dataset)
-prompt_results(lora_instruct_model, tokenizer, dataset)
+prompt_results("Original Model", original_model, tokenizer, dataset)
+prompt_results("Full finetuning", instruct_model, tokenizer, dataset)
+prompt_results("Lora finetuning", lora_instruct_model, tokenizer, dataset)
 
